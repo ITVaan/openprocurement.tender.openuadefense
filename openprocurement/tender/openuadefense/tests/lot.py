@@ -1867,12 +1867,682 @@ class TenderLotProcessTest(BaseTenderUAContentWebTest):
         self.assertEqual(response.json['data']['status'], 'complete')
 
 
+class TenderThresholdUADefenseLotResourceTest(BaseTenderUAContentWebTest):
+    CONTENT_TYPE = 'application/json'
+    RESPONSE_CODE = {
+        '200': '200 OK',
+        '201': '201 Created',
+        '403': '403 Forbidden',
+        '404': '404 Not Found',
+        '415': '415 Unsupported Media Type',
+        '422': '422 Unprocessable Entity'
+    }
+    TENDER_STATUSES = [
+        'complete',
+        'active.pre-qualification',
+        'active.pre-qualification.stand-still',
+        'active.auction',
+        'active.qualification',
+        'active.awarded'
+    ]
+
+    def create_lot(self):
+        response = self.app.post_json(
+            '/tenders/{}/lots?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': test_lots[0]}
+        )
+
+        return response
+
+    def test_create_tender_lot_invalid(self):
+        response = self.app.post_json('/tenders/id/lots', {
+            'data': {'title': 'lot title', 'description': 'lot description'}
+        }, status=404)
+        self.assertEqual(response.status, '404 Not Found')
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.jsonp['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'tender_id'}
+        ])
+        request_path = '/tenders/{}/lots?acc_token={}'.format(self.tender_id, self.tender_token)
+
+        response = self.app.post(request_path, 'data', status=415)
+        self.assertEqual(response.status, self.RESPONSE_CODE['415'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {
+                u'description': u'Content-Type header should be one of [\'application/json\']',
+                u'location': u'header', u'name': u'Content-Type'
+            }
+        ])
+        response = self.app.post(request_path, 'data', content_type='application/json', status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'No JSON object could be decoded', u'location': u'body', u'name': u'data'}
+        ])
+        response = self.app.post_json(request_path, 'data', status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Data not available', u'location': u'body', u'name': u'data'}
+        ])
+        response = self.app.post_json(request_path, {'not_data': {}}, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Data not avaliable', u'location': u'body', u'name': u'data'}
+        ])
+
+        REQUIRED_FIELD_MSG = u'This field is required.'
+
+        response = self.app.post_json(request_path, {'data': {}}, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [REQUIRED_FIELD_MSG], u'location': u'body', u'name': u'minimalStep'},
+            {u'description': [REQUIRED_FIELD_MSG], u'location': u'body', u'name': u'value'},
+            {u'description': [REQUIRED_FIELD_MSG], u'location': u'body', u'name': u'title'}
+        ])
+        response = self.app.post_json(request_path, {'data': {'invalid_field': 'invalid_value'}}, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Rogue field', u'location': u'body', u'name': u'invalid_field'}
+        ])
+        response = self.app.post_json(request_path, {'data': {'value': 'invalid_value'}}, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [
+                u'Please use a mapping for this field or Value instance instead of unicode.'
+            ],
+                u'location': u'body', u'name': u'value'}
+        ])
+        response = self.app.post_json(request_path, {
+            'data': {
+                'title': 'lot title',
+                'description': 'lot description',
+                'value': {'amount': '100.0'},
+                'minimalStep': {'amount': '500.0'}
+            }
+        }, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [u'value should be less than value of lot'],
+             u'location': u'body', u'name': u'minimalStep'}
+        ])
+        response = self.app.post_json(request_path, {'data': {
+            'title': 'lot title',
+            'description': 'lot description',
+            'value': {'amount': '500.0'},
+            'minimalStep': {'amount': '100.0', 'currency': 'USD'}
+        }})
+        self.assertEqual(response.status, '201 Created')
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        response = self.app.get(request_path)
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        lots = response.json['data']
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0]['minimalStep']['currency'], 'UAH')
+        self.assertEqual(lots[0]['minimalStep']['amount'], 100)
+
+        response = self.app.patch_json('/tenders/{}?acc_token={}'.format(
+            self.tender_id, self.tender_token
+        ), {'data': {'items': [{'relatedLot': '0' * 32}]}}, status=422)
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [{u'relatedLot': [u'relatedLot should be one of lots']}],
+             u'location': u'body',
+             u'name': u'items'}
+        ])
+
+    def test_create_tender_lot(self):
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+        self.assertEqual(lot['title'], 'lot title')
+        self.assertEqual(lot['description'], 'lot description')
+        self.assertIn('id', lot)
+        self.assertIn(lot['id'], response.headers['Location'])
+        self.assertNotIn('guarantee', lot)
+
+        response = self.app.post_json(
+            '/tenders/{}/lots?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': lot},
+            status=422
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [u'Lot id should be uniq for all lots'],
+             u'location': u'body',
+             u'name': u'lots'}
+        ])
+
+    def test_add_tender_lot(self):
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.post_json(
+            '/tenders/some_id/lots?acc_token={}'.format(self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'tender_id'}
+        ])
+
+        response = self.app.post_json(
+            '/tenders/{}/lots'.format(self.tender_id)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Forbidden', u'location': u'url', u'name': u'permission'}
+        ])
+
+        for tender_status in self.TENDER_STATUSES:
+            self.set_status(tender_status)
+            response = self.app.post_json(
+                '/tenders/{}/lots?acc_token={}'.format(self.tender_id, self.tender_token)
+            )
+            self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+            self.assertEqual(response.content_type, self.CONTENT_TYPE)
+            self.assertEqual(response.json['status'], 'error')
+            self.assertEqual(
+                response.json['errors'][0]['description'],
+                'Can\'t update lot in current (%s) tender status' % tender_status
+            )
+
+    def test_patch_tender_lot(self):
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {"title": 'new title'}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data']['title'], 'new title')
+
+        response = self.app.patch_json(
+            '/tender/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'title_en': 'new en title'}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data']['title_en'], 'new en title')
+
+        response = self.app.patch_json(
+            '/tender/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'value': {'amount': 500}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data']['value']['amount'], 500)
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/some_id?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'title': 'other title'}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/some_id'.format(self.tender_id, self.tender_token),
+            {'data': {'title': 'other title'}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+        response = self.app.patch_json(
+            '/tender/{}/lots/{}'.format(self.tender_id, lot['id']),
+            {'data': {'title': 'other title'}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Forbidden', u'location': u'url', u'name': u'permission'}
+        ])
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data']['title'], 'new title')
+
+        for tender_status in self.TENDER_STATUSES:
+            self.set_status(tender_status)
+            response = self.app.patch_json(
+                '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+                {'data': {'title': 'other title'}}
+            )
+            self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+            self.assertEqual(response.content_type, self.CONTENT_TYPE)
+            self.assertEqual(
+                response.json['errors'][0]['description'],
+                'Can\'t update lot in current (%s) tender status' % tender_status
+            )
+
+    def test_patch_tender_currency(self):
+        response = self.app.post_json(
+            '/tenders/{}/lots?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': test_lots[0]}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertEqual(lot['value']['currency'], 'UAH')
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'value': {'currency': 'GBP'}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertEqual(lot['value']['currency'], 'GBP')
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'value': {'currency': 'USD'}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+        self.assertEqual(lot['value']['currency'], 'GBP')
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'value': {'currency': 'USD'}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertEqual(lot['value']['currency'], 'GBP')
+
+    def test_patch_tender_vat(self):
+        response = self.app.patch_json(
+            '/tenders/{}?ass_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'value': {'valueAddedTaxIncluded': True}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertTrue(lot['value']['valueAddedTaxIncluded'])
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'value': {'valueAddedTaxIncluded': False}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertFalse(lot['value']['valueAddedTaxIncluded'])
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'value': {'valueAddedTaxIncluded': True}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertFalse(lot['value']['valueAddedTaxIncluded'])
+
+        response = self.app.patch_json(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token),
+            {'data': {'value': {'valueAddedTaxIncluded': True}}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.app.get('/tenders/{}/lots/{}'.format(self.tender_id, lot['id']))
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        self.assertFalse(lot['value']['valueAddedTaxIncluded'])
+
+    def test_delete_unsuccessful_tender_lot(self):
+        response = self.create_lot()
+
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data'], lot)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/some_id?acc_token={}'.format(self.tender_id, self.tender_token), status=404
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+        response = self.app.delete('/tenders/some_id/lots/some_id', status=404)
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'tender_id'}
+        ])
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}'.format(self.tender_id, lot['id']), status=403
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Forbidden', u'location': u'url', u'name': u'permission'}
+        ])
+
+        response = self.create_lot()
+
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'items': [{'relatedLot': lot['id']}]}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token), status=422
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {
+                u'description': [{
+                    u'relatedLot': [u'relatedLot should be one of lots']
+                }],
+                u'location': u'body',
+                u'name': u'items'
+            }
+        ])
+
+        self.set_status('unsuccessful')
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token), status=403
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(
+            response.json['errors'][0]['description'],
+            'Can\'t delete lot in current (unsuccessful) tender status'
+        )
+
+        response = self.app.get(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+    def test_delete_tender_lot(self):
+        response = self.create_lot()
+
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data'], lot)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/some_id?acc_token={}'.format(self.tender_id, self.tender_token), status=404
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+        response = self.app.delete('/tenders/some_id/lots/some_id', status=404)
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.status, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'tender_id'}
+        ])
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}'.format(self.tender_id, lot['id']), status=403
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Forbidden', u'location': u'url', u'name': u'permission'}
+        ])
+
+        response = self.create_lot()
+
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'items': [{'relatedLot': lot['id']}]}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token), status=422
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [{u'relatedLot': [u'relatedLot should be one of lots']}],
+             u'location': u'body',
+             u'name': u'items'}
+        ])
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data': {'items': [{'relatedLot': None}]}}
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+
+        response = self.app.get(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token), status=404
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+    def test_delete_complete_tender_lot(self):
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['data'], lot)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/some_id?acc_token={}'.format(self.tender_id, self.tender_token), status=404
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'lot_id'}
+        ])
+
+        response = self.app.delete('/tenders/some_id/lots/some_id', status=404)
+        self.assertEqual(response.status, self.RESPONSE_CODE['404'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Not Found', u'location': u'url', u'name': u'tender_id'}
+        ])
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}'.format(self.tender_id, lot['id']), status=403
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': u'Forbidden', u'location': u'url', u'name': u'permission'}
+        ])
+
+        response = self.create_lot()
+        self.assertEqual(response.status, self.RESPONSE_CODE['201'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        lot = response.json['data']
+
+        response = self.app.patch_json(
+            '/tenders/{}?acc_token={}'.format(self.tender_id, self.tender_token),
+            {'data':
+                {'items': [{
+                    'relatedLot': lot['id']
+                }]}
+            }
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token), status=422
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['422'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(response.json['errors'], [
+            {u'description': [
+                {u'relatedLot': [u'relatedLot should be one of lots']}
+            ],
+                u'location': u'body',
+                u'name': u'items'}
+        ])
+
+        self.set_status('complete')
+
+        response = self.app.delete(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['403'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+        self.assertEqual(response.json['status'], 'error')
+        self.assertEqual(
+            response.json['errors'][0]['description'],
+            'Can\'t delete lot in current (complete) tender status'
+        )
+
+        response = self.app.get(
+            '/tenders/{}/lots/{}?acc_token={}'.format(self.tender_id, lot['id'], self.tender_token)
+        )
+        self.assertEqual(response.status, self.RESPONSE_CODE['200'])
+        self.assertEqual(response.content_type, self.CONTENT_TYPE)
+
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(unittest.makeSuite(TenderLotResourceTest))
     suite.addTest(unittest.makeSuite(TenderLotBidderResourceTest))
     suite.addTest(unittest.makeSuite(TenderLotFeatureBidderResourceTest))
     suite.addTest(unittest.makeSuite(TenderLotProcessTest))
+    suite.addTest(unittest.makeSuite(TenderThresholdUADefenseLotResourceTest))
     return suite
 
 
