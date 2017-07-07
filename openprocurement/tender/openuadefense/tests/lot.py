@@ -10,7 +10,9 @@ from openprocurement.tender.openuadefense.tests.base import BaseTenderUAContentW
 class TenderLotResourceTest(BaseTenderUAContentWebTest):
 
     def test_create_tender_lot_invalid(self):
-        response = self.app.post_json('/tenders/some_id/lots', {'data': {'title': 'lot title', 'description': 'lot description'}}, status=404)
+        response = self.app.post_json(
+            '/tenders/some_id/lots', {'data': {'title': 'lot title', 'description': 'lot description'}}, status=404
+        )
         self.assertEqual(response.status, '404 Not Found')
         self.assertEqual(response.content_type, 'application/json')
         self.assertEqual(response.json['status'], 'error')
